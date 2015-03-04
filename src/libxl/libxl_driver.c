@@ -1230,7 +1230,7 @@ libxlDomainDestroyFlags(virDomainPtr dom,
     event = virDomainEventLifecycleNewFromObj(vm, VIR_DOMAIN_EVENT_STOPPED,
                                      VIR_DOMAIN_EVENT_STOPPED_DESTROYED);
 
-    if (libxl_domain_destroy(cfg->ctx, vm->def->id, NULL) < 0) {
+    if (libxlDomainDestroyInternal(driver, vm) < 0) {
         virReportError(VIR_ERR_INTERNAL_ERROR,
                        _("Failed to destroy domain '%d'"), vm->def->id);
         goto cleanup;
@@ -1572,7 +1572,7 @@ libxlDoDomainSave(libxlDriverPrivatePtr driver, virDomainObjPtr vm,
     event = virDomainEventLifecycleNewFromObj(vm, VIR_DOMAIN_EVENT_STOPPED,
                                          VIR_DOMAIN_EVENT_STOPPED_SAVED);
 
-    if (libxl_domain_destroy(cfg->ctx, vm->def->id, NULL) < 0) {
+    if (libxlDomainDestroyInternal(driver, vm) < 0) {
         virReportError(VIR_ERR_INTERNAL_ERROR,
                        _("Failed to destroy domain '%d'"), vm->def->id);
         goto cleanup;
@@ -1770,7 +1770,7 @@ libxlDomainCoreDump(virDomainPtr dom, const char *to, unsigned int flags)
     }
 
     if (flags & VIR_DUMP_CRASH) {
-        if (libxl_domain_destroy(cfg->ctx, vm->def->id, NULL) < 0) {
+        if (libxlDomainDestroyInternal(driver, vm) < 0) {
             virReportError(VIR_ERR_INTERNAL_ERROR,
                            _("Failed to destroy domain '%d'"), vm->def->id);
             goto unpause;
