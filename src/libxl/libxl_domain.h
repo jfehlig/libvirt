@@ -66,6 +66,8 @@ struct _libxlDomainObjPrivate {
     unsigned short migrationPort;
 
     struct libxlDomainJobObj job;
+
+    virCond destroyFinished; /* signals completion of destroy operation */
 };
 
 

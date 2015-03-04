@@ -200,6 +200,13 @@ libxlDomainObjPrivateAlloc(void)
         return NULL;
     }
 
+    if (virCondInit(&priv->destroyFinished) < 0) {
+        libxlDomainObjFreeJob(priv);
+        virChrdevFree(priv->devs);
+        virObjectUnref(priv);
+        return NULL;
+    }
+
     return priv;
 }
 
@@ -208,6 +215,7 @@ libxlDomainObjPrivateDispose(void *obj)
 {
     libxlDomainObjPrivatePtr priv = obj;
 
+    virCondDestroy(&priv->destroyFinished);
     libxlDomainObjFreeJob(priv);
     virChrdevFree(priv->devs);
 }
@@ -618,6 +626,18 @@ libxlDomainSaveImageOpen(libxlDriverPrivatePtr driver,
     return -1;
 }
 
+static void
+libxlDomainDestroyCallback(libxl_ctx *ctx ATTRIBUTE_UNUSED,
+                           int rc ATTRIBUTE_UNUSED,
+                           void *for_callback)
+{
+    virDomainObjPtr vm = for_callback;
+    libxlDomainObjPrivatePtr priv = vm->privateData;
+
+    virCondSignal(&priv->destroyFinished);
+}
+
+
 /*
  * Internal domain destroy function.
  *
@@ -628,10 +648,25 @@ libxlDomainDestroyInternal(libxlDriverPrivatePtr driver,
                            virDomainObjPtr vm)
 {
     libxlDriverConfigPtr cfg = libxlDriverConfigGet(driver);
+    libxlDomainObjPrivatePtr priv = vm->privateData;
+    libxl_asyncop_how aop_destroy_how;
     int ret = -1;
 
-    ret = libxl_domain_destroy(cfg->ctx, vm->def->id, NULL);
+    aop_destroy_how.u.for_callback = vm;
+    aop_destroy_how.callback = libxlDomainDestroyCallback;
+    if (libxl_domain_destroy(cfg->ctx, vm->def->id, &aop_destroy_how) < 0) {
+        VIR_DEBUG("Failed to destroy domain with libxenlight");
+        goto cleanup;
+    }
 
+    if (virCondWait(&priv->destroyFinished, &vm->parent.lock) < 0) {
+        VIR_DEBUG("Unable to wait on destroy condition");
+        goto cleanup;
+    }
+
+    ret = 0;
+
+ cleanup:
     virObjectUnref(cfg);
     return ret;
 }
