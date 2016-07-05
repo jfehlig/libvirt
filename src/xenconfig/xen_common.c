@@ -931,7 +931,21 @@ xenParseVif(virConfPtr conf, virDomainDefPtr def, const char *vif_typename)
                 net->type = VIR_DOMAIN_NET_TYPE_ETHERNET;
             }
 
-            if (net->type == VIR_DOMAIN_NET_TYPE_BRIDGE) {
+            if (net->type == VIR_DOMAIN_NET_TYPE_BRIDGE && bridge[0]) {
+                tagstr = strrchr(bridge, '.');
+                if (tagstr) {
+                    if (VIR_STRNDUP(net->data.bridge.brname, bridge,
+                                    tagstr - bridge) < 0)
+                        goto cleanup;
+                    tagstr++;
+                    if (virStrToLong_ui(tagstr, &trunkstr, 10, &tag) < 0)
+                        goto cleanup;
+                    while (trunk && trunk++) {
+                        if (virStrToLong_ui(trunkstr, &trunkstr, 10, &tag) < 0)
+                            goto cleanup;
+                    }
+                    
+                
                 if (bridge[0] && VIR_STRDUP(net->data.bridge.brname, bridge) < 0)
                     goto cleanup;
             }
@@ -1147,12 +1161,37 @@ xenFormatNet(virConnectPtr conn,
     virBuffer buf = VIR_BUFFER_INITIALIZER;
     virConfValuePtr val, tmp;
     char macaddr[VIR_MAC_STRING_BUFLEN];
+    virNetDevVPortProfilePtr port_profile;
+    virNetDevVlanPtr virt_vlan;
+    size_t i;
+    const char *script = net->script ? net->script : DEFAULT_VIF_SCRIPT;
 
     virBufferAsprintf(&buf, "mac=%s", virMacAddrFormat(&net->mac, macaddr));
 
+    port_profile = virDomainNetGetActualVirtPortProfile(net);
+    virt_vlan = virDomainNetGetActualVlan(net);
     switch (net->type) {
     case VIR_DOMAIN_NET_TYPE_BRIDGE:
         virBufferAsprintf(&buf, ",bridge=%s", net->data.bridge.brname);
+        if (port_profile &&
+            port_profile->virtPortType == VIR_NETDEV_VPORT_PROFILE_OPENVSWITCH) {
+            script = SYSCONFDIR "/xen/scripts/vif-openvswitch";
+            /*
+             * libxl_device_nic->bridge supports an extended format for
+             * specifying VLAN tags and trunks
+             *
+             * BRIDGE_NAME[.VLAN][:TRUNK:TRUNK]
+             */
+            if (virt_vlan && virt_vlan->nTags > 0) {
+                if (virt_vlan->trunk) {
+                    for (i = 0; i < virt_vlan->nTags; i++)
+                        virBufferAsprintf(&buf, ":%d", virt_vlan->tag[i]);
+                } else {
+                    virBufferAsprintf(&buf, ".%d", virt_vlan->tag[0]);
+                }
+            }
+        }
+
         if (net->guestIP.nips == 1) {
             char *ipStr = virSocketAddrFormat(&net->guestIP.ips[0]->address);
             virBufferAsprintf(&buf, ",ip=%s", ipStr);
@@ -1162,7 +1201,7 @@ xenFormatNet(virConnectPtr conn,
                            _("Driver does not support setting multiple IP addresses"));
             goto cleanup;
         }
-        virBufferAsprintf(&buf, ",script=%s", DEFAULT_VIF_SCRIPT);
+        virBufferAsprintf(&buf, ",script=%s", script);
         break;
 
     case VIR_DOMAIN_NET_TYPE_ETHERNET:
@@ -1198,7 +1237,7 @@ xenFormatNet(virConnectPtr conn,
         }
 
         virBufferAsprintf(&buf, ",bridge=%s", bridge);
-        virBufferAsprintf(&buf, ",script=%s", DEFAULT_VIF_SCRIPT);
+        virBufferAsprintf(&buf, ",script=%s", script);
     }
     break;
 
